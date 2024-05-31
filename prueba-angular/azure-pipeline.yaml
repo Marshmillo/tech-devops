@@ -1,0 +1,124 @@
+trigger:
+- main
+
+pool:
+  vmImage: 'ubuntu-latest'
+
+variables:
+  dockerRegistryServiceConnection: 'dockerhub-service-connection'
+  imageRepository: 'madmilodz/prueba-angular'
+  dockerfilePath: 'Dockerfile'
+  tag: '$(Build.BuildId)'
+
+stages:
+- stage: Build
+  jobs:
+  - job: PrintHolaMundo
+    displayName: 'Imprimir Hola Mundo 10 veces'
+    steps:
+    - task: Bash@3
+      displayName: 'Imprimir Hola Mundo 10 veces'
+      inputs:
+        targetType: 'inline'
+        script: |
+          for i in {1..10}; do
+            echo "Hola Mundo"
+          done
+
+  - job: CreateAndPrintFiles
+    displayName: 'Crear 10 archivos con la fecha e imprimir en consola'
+    steps:
+    - task: Bash@3
+      displayName: 'Crear 10 archivos con la fecha'
+      inputs:
+        targetType: 'inline'
+        script: |
+          for i in {1..10}; do
+            date > "file_$i.txt"
+          done
+          
+    - task: Bash@3
+      displayName: 'Imprimir archivos en consola'
+      inputs:
+        targetType: 'inline'
+        script: |
+          for i in {1..10}; do
+            echo "Contenido de file_$i.txt:"
+            cat "file_$i.txt"
+          done
+
+  - job: Build
+    displayName: 'Build Docker image'
+    steps:
+    - task: JavaToolInstaller@0
+      inputs:
+        versionSpec: '17'
+        jdkArchitectureOption: 'x64'
+        jdkSourceOption: 'PreInstalled'
+
+    - task: NodeTool@0
+      inputs:
+        versionSpec: '16.x'
+      displayName: 'Install Node.js'
+
+    - script: |
+        npm install
+        npm run build --prod
+      displayName: 'Build Angular app'
+
+    - task: SonarQubePrepare@5
+      inputs:
+        SonarQube: 'sonar-service-connection'
+        scannerMode: 'CLI'
+        configMode: 'file'
+        configFile: '$(Build.SourcesDirectory)/sonar-project.properties'
+
+    - task: SonarQubeAnalyze@5
+      inputs:
+        jdkversion: 'JAVA_HOME_17_X64'
+    
+    - task: SonarQubePublish@5
+      inputs:
+        pollingTimeoutSec: '300'
+    
+    - task: Docker@2
+      inputs:
+        containerRegistry: '$(dockerRegistryServiceConnection)'
+        repository: '$(imageRepository)'
+        command: 'buildAndPush'
+        Dockerfile: '$(dockerfilePath)'
+        tags: |
+          $(tag)
+      displayName: 'Build and push Docker image'
+
+- stage: DeployToAKS
+  displayName: 'Deploy to AKS'
+  dependsOn: Build
+  jobs:
+  - job: Deploy
+    displayName: 'Deploy to AKS'
+    steps:
+    - task: AzureCLI@2
+      inputs:
+        azureSubscription: 'azure-service-connection'
+        scriptType: 'bash'
+        scriptLocation: 'inlineScript'
+        inlineScript: |
+          # Set variables
+          RESOURCE_GROUP='tectest-rg'
+          AKS_CLUSTER='tectest-aks'
+          R_NAME='madmilodz'
+          IMAGE_NAME='prueba-angular'
+          IMAGE_TAG=$(Build.BuildId)
+
+          # Login to AKS
+          az aks get-credentials --resource-group $RESOURCE_GROUP --name $AKS_CLUSTER
+
+          # Update the image in the deployment.yaml file
+          sed -i 's|image: .*$|image: '$R_NAME'/'$IMAGE_NAME':'$IMAGE_TAG'|' environment/deployment.yaml
+
+          # Apply the deployment
+          kubectl apply -f environment/deployment.yaml
+
+          # Apply the service
+          kubectl apply -f environment/service.yaml

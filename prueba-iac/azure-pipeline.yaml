@@ -1,0 +1,36 @@
+trigger:
+- main
+
+pool:
+  vmImage: 'ubuntu-latest'
+
+stages:
+- stage: Deploy
+  jobs:
+  - job: Terraform
+    displayName: 'Deploy AKS with Terraform'
+    steps:
+    - task: TerraformInstaller@0
+      inputs:
+        terraformVersion: 'latest'
+      displayName: 'Install Terraform'
+      
+    - task: AzureCLI@2
+      inputs:
+        azureSubscription: 'azure-service-connection' # Aquí se especifica la conexión de servicio
+        scriptType: 'bash'
+        scriptLocation: 'inlineScript'
+        inlineScript: |
+          echo "Initializing Terraform"
+          terraform init
+          echo "Planning Terraform deployment"
+          terraform plan -out=tfplan
+          echo "Applying Terraform deployment"
+          terraform apply -auto-approve tfplan
+      displayName: 'Initialize, Plan, and Apply Terraform'
+
+    - task: PublishPipelineArtifact@1
+      inputs:
+        targetPath: $(Build.SourcesDirectory)
+        artifactName: 'terraform-output'
+      displayName: 'Publish Terraform Output'
